@@ -36,10 +36,12 @@ import {
   loadConfig,
   locateBar,
   saveConfig,
+  setVideoMeta,
   segmentAt,
   touchOpened,
 } from './config'
 import { Metronome } from './metronome'
+import { fetchVideoMeta } from './video-fetch'
 import { BarSwipe } from './swipe'
 import { SegmentMarkerOverlay, ensureStyles } from './ui'
 import pencilIcon from './pencil.svg'
@@ -90,6 +92,7 @@ let loopButton: VideoControlBarItem | null = null
 let currentVideo: HTMLVideoElement | null = null
 let currentConfig: BarConfig | null = null
 let currentKey = ''
+let currentVideoMeta: Partial<Pick<BarConfig, 'aid' | 'bvid' | 'videoTitle' | 'videoCover'>> = {}
 let editClose: (() => void) | null = null
 let syncToken = 0
 let loopStart: number | null = null
@@ -226,14 +229,10 @@ export const openEditor = () => {
       hasConfig: Boolean(currentConfig),
       // 配置实时生效：每次编辑立即保存并应用，无需「保存」按钮。
       onPreview: (draft: BarConfig) => {
-        currentConfig = draft
+        currentConfig = { ...draft, ...currentVideoMeta }
         if (currentKey) {
           // 记录当前视频的 aid/bvid，供「管理小节线」显示标题/封面/跳转。
-          saveConfig(currentKey, {
-            ...draft,
-            aid: draft.aid || String(unsafeWindow.aid ?? currentKey),
-            bvid: draft.bvid || (unsafeWindow.bvid as string | undefined),
-          })
+          saveConfig(currentKey, currentConfig)
         }
         metronome?.setConfig(draft)
         metronome?.setMuted(draft.metronomeMuted)
@@ -636,11 +635,35 @@ const sync = async (id: { aid?: string; cid?: string }) => {
   }
   currentVideo = video
   currentKey = id.cid || id.aid || ''
+  // videoChange 的 aid 跟随播放器切换；页面全局变量在合集/嵌入播放器中可能缺失或过期。
+  const pathId = location.pathname.match(/\/video\/(BV[0-9a-zA-Z]{10}|av\d+)/)?.[1]
+  currentVideoMeta = {}
+  if (id.aid) {
+    currentVideoMeta.aid = String(id.aid)
+  } else if (pathId?.startsWith('av')) {
+    currentVideoMeta.aid = pathId.slice(2)
+  } else if (pathId) {
+    currentVideoMeta.bvid = pathId
+  }
   currentConfig = currentKey ? loadConfig(currentKey) : null
   if (currentKey && currentConfig) {
+    setVideoMeta(currentKey, currentVideoMeta)
+    currentConfig = { ...currentConfig, ...currentVideoMeta }
     // 记录「最后打开时间」。
     touchOpened(currentKey)
   }
+  // 无配置时也预取，首次编辑即可保存完整信息。异步结果不能写到切换后的视频。
+  const metaKey = currentKey
+  fetchVideoMeta(currentVideoMeta.aid, currentVideoMeta.bvid).then(meta => {
+    if (!meta || !enabled || token !== syncToken) {
+      return
+    }
+    currentVideoMeta = meta
+    setVideoMeta(metaKey, meta)
+    if (currentConfig) {
+      currentConfig = { ...currentConfig, ...meta }
+    }
+  })
 
   metronome?.setVideo(video)
   metronome?.setConfig(currentConfig)

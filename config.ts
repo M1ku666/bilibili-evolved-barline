@@ -416,7 +416,7 @@ export const saveConfig = (key: string, cfg: BarConfig) => {
 /** 更新配置里的视频元信息（标题/封面/bv），不触碰 created/opened 时间戳。 */
 export const setVideoMeta = (
   key: string,
-  meta: Partial<Pick<BarConfig, 'videoTitle' | 'videoCover' | 'bvid'>>,
+  meta: Partial<Pick<BarConfig, 'videoTitle' | 'videoCover' | 'bvid' | 'aid'>>,
 ) => {
   const all = loadAllConfigs()
   if (!all[key]) {

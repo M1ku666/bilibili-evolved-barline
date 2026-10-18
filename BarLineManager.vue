@@ -44,7 +44,7 @@
         <a
           class="blm-card-inner"
           :href="cardHref(card)"
-          :target="card.bvid || card.aid ? '_blank' : undefined"
+          :target="cardHref(card) ? '_blank' : undefined"
           rel="noopener"
         >
           <span class="blm-cover-wrap">
@@ -54,6 +54,7 @@
               :src="card.cover"
               alt=""
               loading="lazy"
+              referrerpolicy="no-referrer"
               @error="onCoverError(card)"
             />
             <div v-else class="blm-cover blm-cover-empty"></div>
@@ -110,6 +111,7 @@ export default Vue.extend({
   data() {
     return {
       cards: [] as Card[],
+      loadVersion: 0,
       query: '',
       selected: [] as string[],
       sortKey: 'openedAt' as 'createdAt' | 'openedAt',
@@ -144,6 +146,7 @@ export default Vue.extend({
     document.addEventListener('visibilitychange', this.onVisibilityChange)
   },
   beforeDestroy() {
+    this.loadVersion++
     document.removeEventListener('visibilitychange', this.onVisibilityChange)
   },
   methods: {
@@ -192,20 +195,21 @@ export default Vue.extend({
       this.selected = []
       this.loadCards()
     },
-    cardHref(card: Card): string {
+    cardHref(card: Card): string | undefined {
       if (card.bvid) {
         return `https://www.bilibili.com/video/${card.bvid}`
       }
       if (card.aid) {
-        return `https://www.bilibili.com/video/?aid=${card.aid}`
+        return `https://www.bilibili.com/video/av${card.aid}`
       }
-      return '#'
+      return undefined
     },
     onCoverError(card: Card) {
       card.cover = ''
       this.cards = [...this.cards]
     },
     async loadCards() {
+      const version = ++this.loadVersion
       const all = loadAllConfigs()
       const keys = Object.keys(all)
       this.cards = keys
@@ -216,7 +220,7 @@ export default Vue.extend({
             title: cfg.videoTitle ?? '',
             cover: cfg.videoCover ?? '',
             bvid: cfg.bvid ?? '',
-            aid: cfg.aid ?? '',
+            aid: cfg.aid === key ? '' : cfg.aid ?? '',
             createdAt: cfg.createdAt ?? 0,
             openedAt: cfg.openedAt ?? 0,
           }
@@ -225,17 +229,21 @@ export default Vue.extend({
       // 清理已不存在的选中项
       const keySet = new Set(keys)
       this.selected = this.selected.filter(k => keySet.has(k))
-      keys.forEach(key => {
-        this.fetchMeta(key, all[key])
-      })
+      // 逐个补全，避免大量并发请求触发 API 限流。
+      for (const key of keys) {
+        if (version !== this.loadVersion) {
+          return
+        }
+        await this.fetchMeta(key, all[key], version)
+      }
     },
-    async fetchMeta(key: string, cfg: BarConfig) {
+    async fetchMeta(key: string, cfg: BarConfig, version: number) {
       if (cfg.videoTitle && cfg.videoCover && cfg.bvid) {
         return
       }
       try {
-        const meta = await fetchVideoMeta(key, cfg.aid)
-        if (meta) {
+        const meta = await fetchVideoMeta(cfg.aid === key ? undefined : cfg.aid, cfg.bvid)
+        if (meta && version === this.loadVersion) {
           setVideoMeta(key, meta)
           const card = this.cards.find(c => c.key === key)
           if (card) {
